@@ -1,0 +1,18 @@
+[package]
+name = "gc-adapter-rp2040"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rp2040-boot2 = "0.3"
+rp2040-hal = { version = "0.10", features = ["rt", "critical-section-impl"] }
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+
+panic-halt = "0.2"
+
+pio = "0.2"
+pio-proc = "0.2"
+
+usb-device = "0.3"
+usbd-hid = "0.8"
