@@ -1,5 +1,6 @@
 use rp2040_hal::pac;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ControllerData {
     pub buttons_1: u8,
     pub buttons_2: u8,
@@ -7,110 +8,137 @@ pub struct ControllerData {
     pub stick_y: u8,
     pub c_stick_x: u8,
     pub c_stick_y: u8,
+    pub analog_l: u8,
+    pub analog_r: u8,
 }
 
-#[link_section = ".data"]
-#[inline(always)]
-fn wait_us(us: u32) {
-    unsafe {
-        let timer = &*pac::TIMER::PTR;
+#[allow(dead_code)]
+impl ControllerData {
+    pub fn button_a(&self) -> bool { (self.buttons_1 & (1 << 0)) != 0 }
+    pub fn button_b(&self) -> bool { (self.buttons_1 & (1 << 1)) != 0 }
+    pub fn button_x(&self) -> bool { (self.buttons_1 & (1 << 2)) != 0 }
+    pub fn button_y(&self) -> bool { (self.buttons_1 & (1 << 3)) != 0 }
+    pub fn button_start(&self) -> bool { (self.buttons_1 & (1 << 4)) != 0 }
+
+    pub fn dpad_left(&self) -> bool { (self.buttons_2 & (1 << 0)) != 0 }
+    pub fn dpad_right(&self) -> bool { (self.buttons_2 & (1 << 1)) != 0 }
+    pub fn dpad_down(&self) -> bool { (self.buttons_2 & (1 << 2)) != 0 }
+    pub fn dpad_up(&self) -> bool { (self.buttons_2 & (1 << 3)) != 0 }
+    pub fn button_z(&self) -> bool { (self.buttons_2 & (1 << 4)) != 0 }
+    pub fn button_r(&self) -> bool { (self.buttons_2 & (1 << 5)) != 0 }
+    pub fn button_l(&self) -> bool { (self.buttons_2 & (1 << 6)) != 0 }
+}
+
+pub struct Joybus<const PIN: usize>;
+
+impl<const PIN: usize> Joybus<PIN> {
+    const PIN_MASK: u32 = 1 << PIN;
+
+    pub const fn new() -> Self {
+        Self
+    }
+
+    #[link_section = ".data"]
+    #[inline(always)]
+    fn wait_us(timer: &pac::timer::RegisterBlock, us: u32) {
         let start = timer.timerawl().read().bits();
         while timer.timerawl().read().bits().wrapping_sub(start) < us {}
     }
-}
 
-macro_rules! pull_low {
-    () => {
+    #[inline(always)]
+    fn pull_low(&self, sio: &pac::sio::RegisterBlock) {
         unsafe {
-            let sio = &*pac::SIO::PTR;
-            sio.gpio_out_clr().write(|w| w.bits(1 << 0));
-            sio.gpio_oe_set().write(|w| w.bits(1 << 0));
+            sio.gpio_out_clr().write(|w| w.bits(Self::PIN_MASK));
+            sio.gpio_oe_set().write(|w| w.bits(Self::PIN_MASK));
         }
-    };
-}
+    }
 
-macro_rules! float_high {
-    () => {
+    #[inline(always)]
+    fn float_high(&self, sio: &pac::sio::RegisterBlock) {
         unsafe {
-            let sio = &*pac::SIO::PTR;
-            sio.gpio_oe_clr().write(|w| w.bits(1 << 0));
+            sio.gpio_oe_clr().write(|w| w.bits(Self::PIN_MASK));
         }
-    };
-}
-
-#[link_section = ".data"]
-#[inline(never)]
-fn send_bit(bit: bool) {
-    pull_low!();
-    if bit {
-        wait_us(1);
-        float_high!();
-        wait_us(3);
-    } else {
-        wait_us(3);
-        float_high!();
-        wait_us(1);
     }
-}
 
-#[link_section = ".data"]
-#[inline(never)]
-fn send_byte(mut byte: u8) {
-    for _ in 0..8 {
-        send_bit((byte & 0x80) != 0);
-        byte <<= 1;
+    #[inline(always)]
+    fn is_high(&self, sio: &pac::sio::RegisterBlock) -> bool {
+        (sio.gpio_in().read().bits() & Self::PIN_MASK) != 0
     }
-}
 
-#[link_section = ".data"]
-pub fn poll_controller() -> Option<ControllerData> {
-    cortex_m::interrupt::free(|_| {
-        send_byte(0x40);
-        send_byte(0x03);
-        send_byte(0x00);
-        send_bit(true);
+    #[link_section = ".data"]
+    #[inline(never)]
+    fn send_bit(&self, sio: &pac::sio::RegisterBlock, timer: &pac::timer::RegisterBlock, bit: bool) {
+        self.pull_low(sio);
+        if bit {
+            Self::wait_us(timer, 1);
+            self.float_high(sio);
+            Self::wait_us(timer, 3);
+        } else {
+            Self::wait_us(timer, 3);
+            self.float_high(sio);
+            Self::wait_us(timer, 1);
+        }
+    }
 
-        float_high!();
+    #[link_section = ".data"]
+    #[inline(never)]
+    fn send_byte(&self, sio: &pac::sio::RegisterBlock, timer: &pac::timer::RegisterBlock, mut byte: u8) {
+        for _ in 0..8 {
+            self.send_bit(sio, timer, (byte & 0x80) != 0);
+            byte <<= 1;
+        }
+    }
 
-        let sio = unsafe { &*pac::SIO::PTR };
 
-        let mut bytes = [0u8; 8];
-        for byte_idx in 0..8 {
-            let mut current_byte = 0u8;
-            for _ in 0..8 {
-                let mut timeout = 0;
+    #[link_section = ".data"]
+    pub fn poll(&self) -> Option<ControllerData> {
+        cortex_m::interrupt::free(|_| {
+            let sio = unsafe { &*pac::SIO::PTR };
+            let timer = unsafe { &*pac::TIMER::PTR };
 
-                while (sio.gpio_in().read().bits() & (1 << 0)) != 0 {
-                    timeout += 1;
-                    if timeout > 100_000 {
-                        return None;
+            self.send_byte(sio, timer, 0x40);
+            self.send_byte(sio, timer, 0x03);
+            self.send_byte(sio, timer, 0x00);
+            self.send_bit(sio, timer, true);
+
+            self.float_high(sio);
+
+            let mut bytes = [0u8; 8];
+
+            for byte in bytes.iter_mut() {
+                let mut current_byte = 0u8;
+                for _ in 0..8 {
+                    let start = timer.timerawl().read().bits();
+                    while self.is_high(sio) {
+                        if timer.timerawl().read().bits().wrapping_sub(start) > 50 {
+                            return None;
+                        }
+                    }
+
+                    Self::wait_us(timer, 2);
+                    let bit_value = if self.is_high(sio) { 1 } else { 0 };
+                    current_byte = (current_byte << 1) | bit_value;
+
+                    let start_return = timer.timerawl().read().bits();
+                    while !self.is_high(sio) {
+                        if timer.timerawl().read().bits().wrapping_sub(start_return) > 15 {
+                            return None;
+                        }
                     }
                 }
-
-                wait_us(2);
-
-                let is_low = (sio.gpio_in().read().bits() & (1 << 0)) == 0;
-                let bit_value = if is_low { 0 } else { 1 };
-
-                current_byte = (current_byte << 1) | bit_value;
-
-                while (sio.gpio_in().read().bits() & (1 << 0)) == 0 {
-                    timeout += 1;
-                    if timeout > 100_000 {
-                        return None;
-                    }
-                }
+                *byte = current_byte;
             }
-            bytes[byte_idx] = current_byte;
-        }
 
-        Some(ControllerData {
-            buttons_1: bytes[0],
-            buttons_2: bytes[1],
-            stick_x: bytes[2],
-            stick_y: bytes[3],
-            c_stick_x: bytes[4],
-            c_stick_y: bytes[5],
+            Some(ControllerData {
+                buttons_1: bytes[0],
+                buttons_2: bytes[1],
+                stick_x: bytes[2],
+                stick_y: bytes[3],
+                c_stick_x: bytes[4],
+                c_stick_y: bytes[5],
+                analog_l: bytes[6],
+                analog_r: bytes[7],
+            })
         })
-    })
+    }
 }
