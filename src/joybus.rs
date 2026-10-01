@@ -104,6 +104,10 @@ pub fn poll_controller() -> Option<ControllerData> {
             bytes[byte_idx] = current_byte;
         }
 
+        if bytes[1] & 0x80 == 0 {
+            return None;
+        }
+
         Some(ControllerData {
             buttons_1: bytes[0],
             buttons_2: bytes[1],

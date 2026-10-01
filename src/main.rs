@@ -65,7 +65,8 @@ fn main() -> ! {
     let _gp0 = _pins.gpio0.into_pull_up_input();
 
     let mut report = GamepadReport {
-        axes: [128, 128, 128, 128],
+        axes: [128, 128],
+        c_axes: [128, 128],
         buttons_1: 0,
         buttons_2: 0,
     };
@@ -85,8 +86,8 @@ fn main() -> ! {
 
                 report.axes[0] = data.stick_x;
                 report.axes[1] = 255_u8.saturating_sub(data.stick_y);
-                report.axes[2] = data.c_stick_x;
-                report.axes[3] = 255_u8.saturating_sub(data.c_stick_y);
+                report.c_axes[0] = data.c_stick_x;
+                report.c_axes[1] = 255_u8.saturating_sub(data.c_stick_y);
             }
 
             let _ = hid.push_input(&report);
