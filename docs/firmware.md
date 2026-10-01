@@ -84,51 +84,26 @@ The driver now bounds wait loops using the hardware timer:
 
 This module defines the USB report layout and handles controller data conversion.
 
-### 3.1 Report Struct & Initialization
+### 3.1 Report Struct
 ```rust
 pub struct GamepadReport {
-    pub x: u8,
-    pub y: u8,
-    pub rx: u8,
-    pub ry: u8,
+    pub axes: [u8; 4],
     pub buttons_1: u8,
     pub buttons_2: u8,
 }
-
-impl GamepadReport {
-    pub const fn neutral() -> Self {
-        Self {
-            x: 128,
-            y: 128,
-            rx: 128,
-            ry: 128,
-            buttons_1: 0,
-            buttons_2: 0,
-        }
-    }
-}
 ```
-The `neutral()` constructor centers all sticks at `128` with all buttons released, ensuring a safe fallback state when the controller is disconnected.
 
-### 3.2 Update Method
-```rust
-pub fn update_from_controller(&mut self, data: &ControllerData) {
-    self.buttons_1 = data.buttons_1;
-    self.buttons_2 = data.buttons_2 & 0x7F; // Mask bit 7
-
-    self.x = data.stick_x;
-    self.y = 255_u8.saturating_sub(data.stick_y); // Invert vertical axis
-
-    self.rx = data.c_stick_x;
-    self.ry = 255_u8.saturating_sub(data.c_stick_y); // Invert vertical axis
-}
-```
+The 4-byte array `axes` represents:
+* `axes[0]`: Main Stick Horizontal
+* `axes[1]`: Main Stick Vertical
+* `axes[2]`: C-Stick Horizontal
+* `axes[3]`: C-Stick Vertical
 
 ---
 
 ## 4. Main Event Loop & Scheduling ([`src/main.rs`](../src/main.rs))
 
-The main entry point configures the system clocks and runs the non-blocking execution loop.
+The main entry point configures the system clocks and runs the execution loop.
 
 ### 4.1 System Initialization
 1. **Clocks:** Configures System PLL to **125 MHz** and USB PLL to **48 MHz**.
@@ -138,31 +113,35 @@ The main entry point configures the system clocks and runs the non-blocking exec
 ### 4.2 The Polling Loop
 ```rust
 loop {
-    // 1. Unconditionally service USB hardware events
-    usb_dev.poll(&mut [&mut hid]);
-
-    // 2. Query controller at deterministic 100 Hz cadence
     let now = timer.timerawl().read().bits();
-    if now.wrapping_sub(last_poll) >= USB_POLL_INTERVAL_US {
+
+    if now.wrapping_sub(last_poll) >= 10_000 {
         last_poll = now;
 
-        if let Some(data) = joybus.poll() {
-            report.update_from_controller(&data);
+        if let Some(data) = joybus::poll_controller() {
+            report.buttons_1 = data.buttons_1;
+            report.buttons_2 = data.buttons_2 & 0x7F;
+
+            report.axes[0] = data.stick_x;
+            report.axes[1] = 255_u8.saturating_sub(data.stick_y);
+            report.axes[2] = data.c_stick_x;
+            report.axes[3] = 255_u8.saturating_sub(data.c_stick_y);
         }
 
-        // 3. Stage HID report when device is configured
-        if usb_dev.state() == UsbDeviceState::Configured {
-            let _ = hid.push_input(&report);
-        }
+        let _ = hid.push_input(&report);
+    }
+
+    if usb_dev.poll(&mut [&mut hid]) {
+        let _ = hid.push_input(&report);
     }
 }
 ```
 
-### 4.3 Why Unconditional `usb_dev.poll()` is Essential
-On Windows, when an interrupt endpoint is waiting for data, the host controller sends IN tokens. If the device buffer is empty, the hardware returns a NAK without triggering an event in `usb_dev.poll()`.
-
-* **The Anti-Pattern:** Gating `push_input()` behind `if usb_dev.poll() { ... }` causes a deadlock on Windows: the host waits for data, while the device waits for an event before pushing data.
-* **The Implemented Fix:** `usb_dev.poll()` runs continuously on every loop iteration to service bus traffic, while `push_input(&report)` is called at the regular 10 ms interval once `Configured`.
+### 4.3 Dual-Trigger Report Dispatch (Windows + Linux)
+Operating systems handle HID interrupt polling differently:
+* **Linux (`jstest`):** Relies on event-driven polling where completed transfers trigger `usb_dev.poll() == true`. Calling `push_input(&report)` when `poll()` returns true guarantees immediate, zero-latency report delivery.
+* **Windows (DirectInput):** Expects a report to be actively staged in the endpoint buffer periodically. Calling `push_input(&report)` every 10 ms ensures Windows never encounters buffer starvation during its polling window.
+* **Safe Overwrite Handling:** If the endpoint is already occupied, `push_input` returns `UsbError::WouldBlock`, which is safely ignored.
 
 ---
 

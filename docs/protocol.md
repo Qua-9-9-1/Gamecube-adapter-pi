@@ -82,21 +82,18 @@ The RP2040 enumerates as a standard USB HID Gamepad (`Usage: 0x05`, `Usage Page:
 
 The report is defined via the `#[gen_hid_descriptor]` macro in `src/usb_hid.rs`:
 
-* **4 Analog Axes (8-bit unsigned integers, range `0` to `255`):**
-  * `X` (`0x30`): Primary Left Stick Horizontal (0 = Left, 255 = Right)
-  * `Y` (`0x31`): Primary Left Stick Vertical (0 = Up, 255 = Down)
-  * `Rx` (`0x33`): C-Stick Horizontal (0 = Left, 255 = Right)
-  * `Ry` (`0x34`): C-Stick Vertical (0 = Up, 255 = Down)
+* **4 Analog Axes (`axes: [u8; 4]`, 8-bit unsigned integers, range `0` to `255`):**
+  * `axes[0]` (`0x30`): Primary Left Stick Horizontal (0 = Left, 255 = Right)
+  * `axes[1]` (`0x31`): Primary Left Stick Vertical
+  * `axes[2]` (`0x32`): C-Stick Horizontal
+  * `axes[3]` (`0x33`): C-Stick Vertical
 * **16 Logical Buttons (1-bit each, packed into 2 bytes):**
   * Buttons 1 to 8: A, B, X, Y, Start, Unused (3 bits)
   * Buttons 9 to 16: D-Left, D-Right, D-Down, D-Up, Z, R, L, Unused (1 bit)
 
 ```rust
 pub struct GamepadReport {
-    pub x: u8,
-    pub y: u8,
-    pub rx: u8,
-    pub ry: u8,
+    pub axes: [u8; 4],
     pub buttons_1: u8,
     pub buttons_2: u8,
 }
@@ -146,7 +143,8 @@ The raw GameCube readings cannot be passed directly to the PC without two essent
 | **Button R** (Digital) | Byte 1, Bit 5 | `buttons_2`, Bit 5 | USB Button 14 |
 | **Button L** (Digital) | Byte 1, Bit 6 | `buttons_2`, Bit 6 | USB Button 15 |
 | **Nintendo Signature** | Byte 1, Bit 7 | *Masked out* | Cleared to 0 |
-| **Main Stick X** | Byte 2 (`0..255`) | `report.x` (`0..255`) | Direct mapping (Left = 0, Right = 255) |
-| **Main Stick Y** | Byte 3 (`0..255`) | `report.y` (`0..255`) | **Inverted:** `255 - raw_y` (Up = 0, Down = 255) |
-| **C-Stick X** | Byte 4 (`0..255`) | `report.rx` (`0..255`) | Direct mapping (Left = 0, Right = 255) |
-| **C-Stick Y** | Byte 5 (`0..255`) | `report.ry` (`0..255`) | **Inverted:** `255 - raw_y` (Up = 0, Down = 255) |
+| **Main Stick X** | Byte 2 (`0..255`) | `report.axes[0]` (`0..255`) | Direct mapping (Left = 0, Right = 255) |
+| **Main Stick Y** | Byte 3 (`0..255`) | `report.axes[1]` (`0..255`) | **PC Inverted:** `255 - raw_y` (Up = 0, Down = 255) |
+| **C-Stick X** | Byte 4 (`0..255`) | `report.axes[2]` (`0..255`) | Direct mapping (Left = 0, Right = 255) |
+| **C-Stick Y** | Byte 5 (`0..255`) | `report.axes[3]` (`0..255`) | **PC Inverted:** `255 - raw_y` (Up = 0, Down = 255) |
+

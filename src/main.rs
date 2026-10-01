@@ -8,7 +8,6 @@ use hal::pac;
 use panic_halt as _;
 use rp2040_hal as hal;
 
-use joybus::Joybus;
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
 use usb_hid::GamepadReport;
@@ -18,11 +17,6 @@ use usbd_hid::hid_class::HIDClass;
 #[link_section = ".boot2"]
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
-
-
-const USB_POLL_INTERVAL_US: u32 = 10_000;
-
-const JOYBUS_GPIO_PIN: usize = 0;
 
 #[hal::entry]
 fn main() -> ! {
@@ -43,15 +37,12 @@ fn main() -> ! {
     .unwrap();
 
     let sio = hal::Sio::new(pac.SIO);
-    let pins = hal::gpio::Pins::new(
+    let _pins = hal::gpio::Pins::new(
         pac.IO_BANK0,
         pac.PADS_BANK0,
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
-
-
-    let _joybus_pin = pins.gpio0.into_pull_up_input();
 
     let usb_bus = hal::usb::UsbBus::new(
         pac.USBCTRL_REGS,
@@ -71,27 +62,38 @@ fn main() -> ! {
         .device_class(0x00)
         .build();
 
-    let joybus = Joybus::<JOYBUS_GPIO_PIN>::new();
-    let mut report = GamepadReport::neutral();
+    let _gp0 = _pins.gpio0.into_pull_up_input();
 
-    let timer = unsafe { &*pac::TIMER::PTR };
+    let mut report = GamepadReport {
+        axes: [128, 128, 128, 128],
+        buttons_1: 0,
+        buttons_2: 0,
+    };
+
+    let timer = unsafe { &*rp2040_hal::pac::TIMER::PTR };
     let mut last_poll = timer.timerawl().read().bits();
 
     loop {
-
-        usb_dev.poll(&mut [&mut hid]);
-
         let now = timer.timerawl().read().bits();
-        if now.wrapping_sub(last_poll) >= USB_POLL_INTERVAL_US {
+
+        if now.wrapping_sub(last_poll) >= 10_000 {
             last_poll = now;
 
-            if let Some(data) = joybus.poll() {
-                report.update_from_controller(&data);
+            if let Some(data) = joybus::poll_controller() {
+                report.buttons_1 = data.buttons_1;
+                report.buttons_2 = data.buttons_2 & 0x7F;
+
+                report.axes[0] = data.stick_x;
+                report.axes[1] = 255_u8.saturating_sub(data.stick_y);
+                report.axes[2] = data.c_stick_x;
+                report.axes[3] = 255_u8.saturating_sub(data.c_stick_y);
             }
 
-            if usb_dev.state() == UsbDeviceState::Configured {
-                let _ = hid.push_input(&report);
-            }
+            let _ = hid.push_input(&report);
+        }
+
+        if usb_dev.poll(&mut [&mut hid]) {
+            let _ = hid.push_input(&report);
         }
     }
 }
