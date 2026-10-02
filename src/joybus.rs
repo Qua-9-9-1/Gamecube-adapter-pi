@@ -109,8 +109,8 @@ pub fn poll_controller() -> Option<ControllerData> {
         }
 
         Some(ControllerData {
-            buttons_1: bytes[0],
-            buttons_2: bytes[1],
+            buttons_1: bytes[0] & 0x1F,
+            buttons_2: bytes[1] & 0x7F,
             stick_x: bytes[2],
             stick_y: bytes[3],
             c_stick_x: bytes[4],

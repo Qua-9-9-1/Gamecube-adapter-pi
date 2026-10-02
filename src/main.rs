@@ -84,7 +84,7 @@ fn main() -> ! {
 
             if let Some(data) = joybus::poll_controller() {
                 report.buttons_1 = data.buttons_1;
-                report.buttons_2 = data.buttons_2 & 0x7F;
+                report.buttons_2 = data.buttons_2;
 
                 report.x = data.stick_x;
                 report.y = 255_u8.saturating_sub(data.stick_y);

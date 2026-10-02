@@ -1,7 +1,7 @@
 use usbd_hid::descriptor::generator_prelude::*;
 
 #[gen_hid_descriptor(
-    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = JOYSTICK) = {
+    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = GAMEPAD) = {
         (collection = PHYSICAL, usage = POINTER) = {
             (usage_page = GENERIC_DESKTOP, usage = 0x30) = {
                 #[item_settings data, variable, absolute] x=input;
