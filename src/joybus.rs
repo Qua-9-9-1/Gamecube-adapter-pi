@@ -7,6 +7,8 @@ pub struct ControllerData {
     pub stick_y: u8,
     pub c_stick_x: u8,
     pub c_stick_y: u8,
+    pub l_analog: u8,
+    pub r_analog: u8,
 }
 
 #[link_section = ".data"]
@@ -109,12 +111,14 @@ pub fn poll_controller() -> Option<ControllerData> {
         }
 
         Some(ControllerData {
-            buttons_1: bytes[0] & 0x1F,
-            buttons_2: bytes[1] & 0x7F,
+            buttons_1: bytes[0],
+            buttons_2: bytes[1],
             stick_x: bytes[2],
             stick_y: bytes[3],
             c_stick_x: bytes[4],
             c_stick_y: bytes[5],
+            l_analog: bytes[6],
+            r_analog: bytes[7],
         })
     })
 }

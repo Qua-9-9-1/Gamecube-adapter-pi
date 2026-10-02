@@ -2,7 +2,8 @@
 #![no_main]
 
 mod joybus;
-mod usb_hid;
+// mod usb_hid;
+mod usb_switch;
 
 use hal::pac;
 use panic_halt as _;
@@ -10,9 +11,10 @@ use rp2040_hal as hal;
 
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
-use usb_hid::GamepadReport;
-use usbd_hid::descriptor::SerializedDescriptor;
-use usbd_hid::hid_class::HIDClass;
+use usb_switch::{WupClass, WupReport};
+// use usb_hid::GamepadReport;
+// use usbd_hid::descriptor::SerializedDescriptor;
+// use usbd_hid::hid_class::HIDClass;
 
 #[link_section = ".boot2"]
 #[used]
@@ -53,50 +55,52 @@ fn main() -> ! {
     );
     let bus_allocator = UsbBusAllocator::new(usb_bus);
 
-    let mut hid = HIDClass::new(&bus_allocator, GamepadReport::desc(), 10);
-    let mut usb_dev = UsbDeviceBuilder::new(&bus_allocator, UsbVidPid(0x1209, 0x0001))
+    // let mut hid = HIDClass::new(&bus_allocator, GamepadReport::desc(), 10);
+    // let mut usb_dev = UsbDeviceBuilder::new(&bus_allocator, UsbVidPid(0x1209, 0x0001))
+    // .strings(&[StringDescriptors::default()
+    //     .manufacturer("Nivo")
+    //     .product("GameCube Adapter PC")])
+    // .unwrap()
+    // .device_class(0x00)
+    // .build();
+
+    let mut nintendo_class = WupClass::new(&bus_allocator);
+    let mut usb_dev = UsbDeviceBuilder::new(&bus_allocator, UsbVidPid(0x057e, 0x0337))
         .strings(&[StringDescriptors::default()
-            .manufacturer("Nivo")
-            .product("GameCube Adapter PC")])
+            .manufacturer("Nintendo")
+            .product("WUP-028")])
         .unwrap()
-        .device_class(0x00)
+        .device_class(0xFF)
         .build();
 
     let _gp0 = _pins.gpio0.into_pull_up_input();
 
-    let mut report = GamepadReport {
-        x: 128,
-        y: 128,
-        rx: 128,
-        ry: 128,
-        buttons_1: 0,
-        buttons_2: 0,
-    };
-
+    let mut report = WupReport::new();
     let timer = unsafe { &*rp2040_hal::pac::TIMER::PTR };
     let mut last_poll = timer.timerawl().read().bits();
+    let mut timeout_counter = 0;
 
     loop {
         let now = timer.timerawl().read().bits();
 
-        if now.wrapping_sub(last_poll) >= 10_000 {
+        if now.wrapping_sub(last_poll) >= 8_000 {
             last_poll = now;
 
             if let Some(data) = joybus::poll_controller() {
-                report.buttons_1 = data.buttons_1;
-                report.buttons_2 = data.buttons_2;
-
-                report.x = data.stick_x;
-                report.y = 255_u8.saturating_sub(data.stick_y);
-                report.rx = data.c_stick_x;
-                report.ry = 255_u8.saturating_sub(data.c_stick_y);
+                timeout_counter = 0;
+                report.update_port_1(&data);
+            } else {
+                timeout_counter += 1;
+                if timeout_counter > 10 {
+                    report.disconnect_port_1();
+                }
             }
 
-            let _ = hid.push_input(&report);
+            let _ = nintendo_class.write_report(&report);
         }
 
-        if usb_dev.poll(&mut [&mut hid]) {
-            let _ = hid.push_input(&report);
+        if usb_dev.poll(&mut [&mut nintendo_class]) {
+            nintendo_class.poll();
         }
     }
 }
