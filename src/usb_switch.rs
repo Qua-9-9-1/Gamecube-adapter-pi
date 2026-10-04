@@ -1,3 +1,10 @@
+use usb_device::class_prelude::*;
+use usb_device::Result;
+
+const WUP_REPORT_SIZE: usize = 37;
+const HID_REPORT_DESCRIPTOR_SIZE: u16 = 28;
+const CONNECTED_PORT: u8 = 0x10;
+
 #[repr(C, packed)]
 pub struct WupReport {
     pub instruction: u8,
@@ -18,19 +25,25 @@ impl WupReport {
         }
     }
 
-pub fn update_port_1(&mut self, data: &crate::joybus::ControllerData) {
-        self.port_1[0] = 0x10;
-        let mut wup_b1 = data.buttons_1 & 0x0F; 
-        
-        wup_b1 |= (data.buttons_2 & 0x0F) << 4; 
-        
-        
+    pub fn update_port_1(&mut self, data: &crate::joybus::ControllerData) {
+        self.port_1[0] = CONNECTED_PORT;
+
+        let mut wup_b1 = data.buttons_1 & 0x0F;
+        wup_b1 |= (data.buttons_2 & 0x0F) << 4;
+
         let mut wup_b2 = 0;
-        
-        if (data.buttons_1 & 0x10) != 0 { wup_b2 |= 0x01; }
-        if (data.buttons_2 & 0x10) != 0 { wup_b2 |= 0x02; }
-        if (data.buttons_2 & 0x20) != 0 { wup_b2 |= 0x04; }
-        if (data.buttons_2 & 0x40) != 0 { wup_b2 |= 0x08; }
+        if (data.buttons_1 & 0x10) != 0 {
+            wup_b2 |= 0x01;
+        }
+        if (data.buttons_2 & 0x10) != 0 {
+            wup_b2 |= 0x02;
+        }
+        if (data.buttons_2 & 0x20) != 0 {
+            wup_b2 |= 0x04;
+        }
+        if (data.buttons_2 & 0x40) != 0 {
+            wup_b2 |= 0x08;
+        }
 
         self.port_1[1] = wup_b1;
         self.port_1[2] = wup_b2;
@@ -44,7 +57,6 @@ pub fn update_port_1(&mut self, data: &crate::joybus::ControllerData) {
 
     pub fn disconnect_port_1(&mut self) {
         self.port_1[0] = 0x00;
-
         self.port_1[1] = 0x00;
         self.port_1[2] = 0x00;
         self.port_1[3] = 128;
@@ -56,12 +68,10 @@ pub fn update_port_1(&mut self, data: &crate::joybus::ControllerData) {
     }
 }
 
-use usb_device::class_prelude::*;
-use usb_device::Result;
-
 pub struct WupClass<'a, B: UsbBus> {
     iface: InterfaceNumber,
     ep_in: EndpointIn<'a, B>,
+    _dummy_out: EndpointOut<'a, B>,
     ep_out: EndpointOut<'a, B>,
 }
 
@@ -69,29 +79,67 @@ impl<'a, B: UsbBus> WupClass<'a, B> {
     pub fn new(alloc: &'a UsbBusAllocator<B>) -> Self {
         Self {
             iface: alloc.interface(),
-            ep_in: alloc.interrupt(37, 1), 
-            ep_out: alloc.interrupt(5, 1),
+            ep_in: alloc.interrupt(37, 8),
+            _dummy_out: alloc.interrupt(1, 8),
+            ep_out: alloc.interrupt(5, 8),
         }
     }
 
     pub fn write_report(&mut self, report: &WupReport) -> Result<usize> {
         let bytes = unsafe {
-            core::slice::from_raw_parts(report as *const _ as *const u8, 37)
+            core::slice::from_raw_parts(report as *const _ as *const u8, WUP_REPORT_SIZE)
         };
         self.ep_in.write(bytes)
     }
-
-    pub fn poll(&mut self) {
-        let mut buf = [0u8; 5];
-        let _ = self.ep_out.read(&mut buf);
-    }
 }
+
+static HID_REPORT_DESCRIPTOR: [u8; HID_REPORT_DESCRIPTOR_SIZE as usize] = [
+    0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x09, 0x01, 0xA1, 0x00, 0x05, 0x09, 0x19, 0x01, 0x29, 0x08,
+    0x15, 0x00, 0x25, 0x01, 0x95, 0x08, 0x75, 0x01, 0x81, 0x02, 0xC0, 0xC0,
+];
 
 impl<B: UsbBus> UsbClass<B> for WupClass<'_, B> {
     fn get_configuration_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
-        writer.interface(self.iface, 0xFF, 0xFF, 0xFF)?;
+        writer.interface(self.iface, 3, 0, 0)?;
+
+        let hid_descriptor = [
+            0x10,
+            0x01,
+            0x00,
+            0x01,
+            0x22,
+            HID_REPORT_DESCRIPTOR_SIZE as u8,
+            (HID_REPORT_DESCRIPTOR_SIZE >> 8) as u8,
+        ];
+        writer.write(0x21, &hid_descriptor)?;
+
         writer.endpoint(&self.ep_in)?;
         writer.endpoint(&self.ep_out)?;
         Ok(())
+    }
+
+    fn control_in(&mut self, xfer: ControlIn<B>) {
+        let req = xfer.request();
+
+        if req.request_type == usb_device::control::RequestType::Standard
+            && req.request == usb_device::control::Request::GET_DESCRIPTOR
+        {
+            let desc_type = (req.value >> 8) as u8;
+            if desc_type == 0x22 {
+                let _ = xfer.accept_with_static(&HID_REPORT_DESCRIPTOR);
+                return;
+            }
+        }
+
+        if req.request_type == usb_device::control::RequestType::Class && req.request == 11 {
+            let _ = xfer.accept_with(&[]);
+        }
+    }
+
+    fn control_out(&mut self, xfer: ControlOut<B>) {
+        let req = xfer.request();
+        if req.request_type == usb_device::control::RequestType::Class && req.request == 11 {
+            let _ = xfer.accept();
+        }
     }
 }

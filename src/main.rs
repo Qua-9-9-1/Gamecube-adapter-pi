@@ -2,19 +2,14 @@
 #![no_main]
 
 mod joybus;
-// mod usb_hid;
 mod usb_switch;
 
 use hal::pac;
 use panic_halt as _;
 use rp2040_hal as hal;
-
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
 use usb_switch::{WupClass, WupReport};
-// use usb_hid::GamepadReport;
-// use usbd_hid::descriptor::SerializedDescriptor;
-// use usbd_hid::hid_class::HIDClass;
 
 #[link_section = ".boot2"]
 #[used]
@@ -54,23 +49,18 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
     let bus_allocator = UsbBusAllocator::new(usb_bus);
-
-    // let mut hid = HIDClass::new(&bus_allocator, GamepadReport::desc(), 10);
-    // let mut usb_dev = UsbDeviceBuilder::new(&bus_allocator, UsbVidPid(0x1209, 0x0001))
-    // .strings(&[StringDescriptors::default()
-    //     .manufacturer("Nivo")
-    //     .product("GameCube Adapter PC")])
-    // .unwrap()
-    // .device_class(0x00)
-    // .build();
-
     let mut nintendo_class = WupClass::new(&bus_allocator);
     let mut usb_dev = UsbDeviceBuilder::new(&bus_allocator, UsbVidPid(0x057e, 0x0337))
         .strings(&[StringDescriptors::default()
             .manufacturer("Nintendo")
-            .product("WUP-028")])
+            .product("GameCube For Switch")])
         .unwrap()
-        .device_class(0xFF)
+        .device_class(0x00)
+        .device_release(0x0100)
+        .max_packet_size_0(64)
+        .unwrap()
+        .max_power(500)
+        .unwrap()
         .build();
 
     let _gp0 = _pins.gpio0.into_pull_up_input();
@@ -78,7 +68,6 @@ fn main() -> ! {
     let mut report = WupReport::new();
     let timer = unsafe { &*rp2040_hal::pac::TIMER::PTR };
     let mut last_poll = timer.timerawl().read().bits();
-    let mut timeout_counter = 0;
 
     loop {
         let now = timer.timerawl().read().bits();
@@ -87,20 +76,14 @@ fn main() -> ! {
             last_poll = now;
 
             if let Some(data) = joybus::poll_controller() {
-                timeout_counter = 0;
                 report.update_port_1(&data);
             } else {
-                timeout_counter += 1;
-                if timeout_counter > 10 {
-                    report.disconnect_port_1();
-                }
+                report.disconnect_port_1();
             }
 
             let _ = nintendo_class.write_report(&report);
         }
 
-        if usb_dev.poll(&mut [&mut nintendo_class]) {
-            nintendo_class.poll();
-        }
+        usb_dev.poll(&mut [&mut nintendo_class]);
     }
 }
