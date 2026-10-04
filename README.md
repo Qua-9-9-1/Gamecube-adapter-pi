@@ -1,81 +1,74 @@
-> 📚 **Complete Documentation Available:** Explore the modular documentation suite in [`docs/`](docs/README.md) covering [Hardware & Wiring](docs/hardware.md), [Protocol Specifications](docs/protocol.md), [Firmware Architecture](docs/firmware.md), [Getting Started](docs/getting-started.md), and the [Engineering Journey](docs/development-journey.md).
+# GameCube Adapter RP2040
 
-Voici la rétrospective structurée de notre projet, décomposée en trois grands axes : les fondations physiques, la guerre temporelle, et la logistique finale.
+Bare-metal Rust firmware for using up to four Nintendo GameCube controllers with an RP2040.
 
-1. Les obstacles physiques et la fondation
-Avant même que le code puisse exister, le circuit électrique devait former une boucle parfaite.
+The firmware exposes the device as a WUP-028-compatible adapter for Wii U and Nintendo Switch. Controllers are read over Joybus and converted into a 37-byte USB report.
 
-L'échec de la Masse (GND) flottante : Au début, le signal ne passait pas car la soudure de la masse était défaillante.
+## Project status
 
-L'analogie de la plomberie : C'est comme essayer de faire couler de l'eau dans un tuyau (le fil de données) sans avoir branché le tuyau d'évacuation (la masse). L'eau refuse d'avancer. La tension ne pouvait pas s'établir.
+- Four Joybus ports on GPIO 0 through 3
+- Four-port WUP-028 USB report
+- Tested with Windows, Linux, Dolphin, and Ryujinx
+- Nintendo Switch mode tested with simulated and physical controller data
+- Deterministic bit-banged Joybus acquisition
+- PIO, DMA, rumble, and controller hot-plug handling remain future work
 
-L'échec de l'absence de Pull-Up : Le fil de données flottait dans le vide, incapable de remonter à 3.3V assez vite.
+The firmware currently uses `usb-device` and `rp2040-hal`. Embassy is not required for the current implementation.
 
-L'analogie du ressort : Sans la résistance de 2 kΩ, le fil manquait de "tension mécanique" pour rebondir vers le haut après avoir été tiré vers le bas. L'ajout physique de cette résistance a garanti des signaux carrés et nets.
+## Hardware
 
-2. La guerre temporelle (Les échecs logiciels)
-C'est ici que nous avons rencontré le plus de défis. La manette GameCube exige une précision à la microseconde (1 millionième de seconde).
+- RP2040 board with USB device support, such as a Raspberry Pi Pico
+- One Joybus data line per controller on GPIO 0, 1, 2, and 3
+- Common ground between the board and the controllers
+- 3.3 V logic power
+- One external pull-up resistor per DATA line, typically 2.0 kOhm to 3.3 V
 
-L'échec du "Vestiaire" (La lenteur de Rust) : Nous avons d'abord utilisé les outils standards de Rust pour allumer et éteindre la broche.
+Rumble motors require an appropriate power supply. Do not connect their power line to the 3.3 V logic rail without checking the wiring and current requirements.
 
-Le problème : Ces outils vérifient la sécurité du système à chaque appel. Changer l'état prenait 50 cycles de processeur au lieu d'un seul. L'impulsion était trop longue, la manette ne comprenait rien.
+## Build and flash
 
-La solution : L'accès brut (Macro pull_low!). Nous avons contourné les sécurités pour manipuler l'interrupteur électrique général de la puce en 1 seul cycle.
+Install the Rust target and UF2 runner:
 
-L'échec du "Couloir" (La mémoire Flash) : Même avec un accès brut, le code était stocké dans la mémoire externe de la puce.
+```bash
+rustup target add thumbv6m-none-eabi
+cargo install elf2uf2-rs
+```
 
-Le problème : Le processeur devait faire des allers-retours dans un bus de communication pour lire chaque ligne de code, créant des micro-retards chaotiques.
+Check and build:
 
-La solution : L'étiquette #[link_section = ".data"]. Nous avons forcé le processeur à copier la recette directement sur son bureau (en mémoire RAM) au démarrage.
+```bash
+cargo fmt --check
+cargo check --target thumbv6m-none-eabi
+cargo build --release --target thumbv6m-none-eabi
+```
 
-L'échec du "Téléphone" (Les interruptions USB) :
+To flash with `elf2uf2-rs`:
 
-Le problème : L'ordinateur interrogeait le port USB en plein milieu d'une lecture de manette. Le processeur mettait le chronomètre en pause pour répondre, détruisant la mesure de notre microseconde.
+1. Hold the BOOTSEL button while connecting the board.
+2. Run `cargo run --release`.
+3. Disconnect and reconnect the board normally.
 
-La solution : Le mode "Ne pas déranger" (interrupt::free). Pendant le dialogue avec la manette (400 µs), le processeur devient sourd au reste du monde.
+## Testing
 
-3. La barrière de la langue et de la logistique
-Une fois le signal parfait, il fallait le traduire correctement pour Linux.
+On Nintendo Switch, open the controller-order screen. The device should be detected as a GameCube controller adapter.
 
-L'échec de la grammaire (L'inversion logique) :
+On Windows, use `joy.cpl` to verify enumeration and axes. Dolphin can use the matching DirectInput or SDL device. Ryujinx may require selecting the SDL backend in its controller settings.
 
-Le problème : Je traduisais un fil "longtemps en bas" comme un 0, au lieu d'un 1.
+On Linux:
 
-L'analogie du miroir : Le signal passait parfaitement, mais le traducteur écrivait le dictionnaire à l'envers. Le PC rejetait ces suites de chiffres illogiques.
+```bash
+sudo apt install joystick
+jstest /dev/input/js0
+```
 
-L'échec de la "Suffocation" (Le bouton 15 fantôme et les zéros) :
+## Documentation
 
-Le problème : Le processeur tournait à 125 millions d'opérations par seconde et harcelait la manette de questions sans arrêt. La manette s'étouffait et renvoyait des données corrompues.
+- [Getting started](docs/getting-started.md)
+- [Firmware architecture](docs/firmware.md)
+- [Protocols](docs/protocol.md)
+- [Hardware and wiring](docs/hardware.md)
+- [Technical history](docs/development-journey.md)
 
-La solution : Le respirateur temporel. Nous avons imposé un délai strict de 10 millisecondes (100 interrogations par seconde) grâce au chronomètre interne de la puce, laissant à la manette le temps de formuler ses réponses.
+## License
 
-L'échec de la "Boîte Unique" (Les axes à -32767) :
-
-Le problème : En déclarant deux joysticks distincts au PC avec des variables isolées, Linux les a fusionnés. Les données du C-Stick écrasaient celles du stick principal.
-
-La solution : Le tableau strict (axes: [u8; 4]). Nous avons fabriqué un colis avec 4 compartiments pré-numérotés (0x30 à 0x33). Chaque axe a désormais sa propre place physique dans le rapport USB.
-
-Bilan : Comment la machine finale fonctionne-t-elle aujourd'hui ?
-Ton adaptateur est désormais un pont d'une efficacité chirurgicale. Voici le déroulement exact de son cycle de vie en 4 étapes logiques :
-
-Le Métronome (Chaque 10 ms) : Le processeur consulte son horloge absolue matérielle. Si 10 millisecondes se sont écoulées, il déclenche l'interrogation.
-
-L'Isolement : Le processeur coupe toutes ses communications externes (USB) et exécute son code depuis la RAM pour éviter toute latence physique.
-
-Le Dialogue Brut :
-
-Il envoie l'ordre de parler (0x40 0x03 0x00) en tapant des impulsions électriques parfaites de 1 et 3 microsecondes.
-
-Il attend que la manette baisse le fil, attend très exactement 2 microsecondes, et photographie l'état du fil. Si c'est en bas, c'est un 0. Si c'est remonté à 3.3V, c'est un 1. Il répète cela 64 fois pour lire les 8 octets.
-
-Le Traitement et l'Expédition :
-
-Il rouvre les communications.
-
-Il efface mathématiquement le tout premier bit (la signature Nintendo qui allumait le Bouton 15).
-
-Il range les boutons dans deux octets distincts, et distribue précisément l'axe X, l'axe Y, le C-Stick X et le C-Stick Y dans un tableau de 4 cases.
-
-Le PC vient récupérer ce rapport USB standardisé et l'interprète sans aucun effort via jstest.
-
-Le système est stable, déterministe (aucune variation de temps n'est laissée au hasard) et conforme aux normes électriques de Nintendo comme aux normes logicielles de l'USB.
+No license has been defined for this repository yet.
