@@ -8,25 +8,20 @@ const CONNECTED_PORT: u8 = 0x10;
 #[repr(C, packed)]
 pub struct WupReport {
     pub instruction: u8,
-    pub port_1: [u8; 9],
-    pub port_2: [u8; 9],
-    pub port_3: [u8; 9],
-    pub port_4: [u8; 9],
+    pub ports: [[u8; 9]; 4],
 }
 
 impl WupReport {
     pub fn new() -> Self {
         Self {
             instruction: 0x21,
-            port_1: [0x00, 0x00, 0x00, 128, 128, 128, 128, 0x00, 0x00],
-            port_2: [0x00, 0x00, 0x00, 128, 128, 128, 128, 0x00, 0x00],
-            port_3: [0x00, 0x00, 0x00, 128, 128, 128, 128, 0x00, 0x00],
-            port_4: [0x00, 0x00, 0x00, 128, 128, 128, 128, 0x00, 0x00],
+            ports: [[0x00, 0x00, 0x00, 128, 128, 128, 128, 0x00, 0x00]; 4],
         }
     }
 
-    pub fn update_port_1(&mut self, data: &crate::joybus::ControllerData) {
-        self.port_1[0] = CONNECTED_PORT;
+    pub fn update_port(&mut self, port_idx: usize, data: &crate::joybus::ControllerData) {
+        let port = &mut self.ports[port_idx];
+        port[0] = CONNECTED_PORT;
 
         let mut wup_b1 = data.buttons_1 & 0x0F;
         wup_b1 |= (data.buttons_2 & 0x0F) << 4;
@@ -45,26 +40,27 @@ impl WupReport {
             wup_b2 |= 0x08;
         }
 
-        self.port_1[1] = wup_b1;
-        self.port_1[2] = wup_b2;
-        self.port_1[3] = data.stick_x;
-        self.port_1[4] = data.stick_y;
-        self.port_1[5] = data.c_stick_x;
-        self.port_1[6] = data.c_stick_y;
-        self.port_1[7] = data.l_analog;
-        self.port_1[8] = data.r_analog;
+        port[1] = wup_b1;
+        port[2] = wup_b2;
+        port[3] = data.stick_x;
+        port[4] = data.stick_y;
+        port[5] = data.c_stick_x;
+        port[6] = data.c_stick_y;
+        port[7] = data.l_analog;
+        port[8] = data.r_analog;
     }
 
-    pub fn disconnect_port_1(&mut self) {
-        self.port_1[0] = 0x00;
-        self.port_1[1] = 0x00;
-        self.port_1[2] = 0x00;
-        self.port_1[3] = 128;
-        self.port_1[4] = 128;
-        self.port_1[5] = 128;
-        self.port_1[6] = 128;
-        self.port_1[7] = 0x00;
-        self.port_1[8] = 0x00;
+    pub fn disconnect_port(&mut self, port_idx: usize) {
+        let port = &mut self.ports[port_idx];
+        port[0] = 0x00;
+        port[1] = 0x00;
+        port[2] = 0x00;
+        port[3] = 128;
+        port[4] = 128;
+        port[5] = 128;
+        port[6] = 128;
+        port[7] = 0x00;
+        port[8] = 0x00;
     }
 }
 

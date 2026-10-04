@@ -14,6 +14,7 @@ use usb_switch::{WupClass, WupReport};
 #[link_section = ".boot2"]
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
+const PORT_PINS: [u32; 4] = [1 << 0, 1 << 1, 1 << 2, 1 << 3];
 
 #[hal::entry]
 fn main() -> ! {
@@ -34,12 +35,17 @@ fn main() -> ! {
     .unwrap();
 
     let sio = hal::Sio::new(pac.SIO);
-    let _pins = hal::gpio::Pins::new(
+    let pins = hal::gpio::Pins::new(
         pac.IO_BANK0,
         pac.PADS_BANK0,
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
+
+    let _gp0 = pins.gpio0.into_pull_up_input();
+    let _gp1 = pins.gpio1.into_pull_up_input();
+    let _gp2 = pins.gpio2.into_pull_up_input();
+    let _gp3 = pins.gpio3.into_pull_up_input();
 
     let usb_bus = hal::usb::UsbBus::new(
         pac.USBCTRL_REGS,
@@ -63,8 +69,6 @@ fn main() -> ! {
         .unwrap()
         .build();
 
-    let _gp0 = _pins.gpio0.into_pull_up_input();
-
     let mut report = WupReport::new();
     let timer = unsafe { &*rp2040_hal::pac::TIMER::PTR };
     let mut last_poll = timer.timerawl().read().bits();
@@ -75,10 +79,12 @@ fn main() -> ! {
         if now.wrapping_sub(last_poll) >= 8_000 {
             last_poll = now;
 
-            if let Some(data) = joybus::poll_controller() {
-                report.update_port_1(&data);
-            } else {
-                report.disconnect_port_1();
+            for i in 0..4 {
+                if let Some(data) = joybus::poll_controller(PORT_PINS[i]) {
+                    report.update_port(i, &data);
+                } else {
+                    report.disconnect_port(i);
+                }
             }
 
             let _ = nintendo_class.write_report(&report);

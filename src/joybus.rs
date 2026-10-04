@@ -22,67 +22,67 @@ fn wait_us(us: u32) {
 }
 
 macro_rules! pull_low {
-    () => {
+    ($pin_mask:expr) => {
         unsafe {
             let sio = &*pac::SIO::PTR;
-            sio.gpio_out_clr().write(|w| w.bits(1 << 0));
-            sio.gpio_oe_set().write(|w| w.bits(1 << 0));
+            sio.gpio_out_clr().write(|w| w.bits($pin_mask));
+            sio.gpio_oe_set().write(|w| w.bits($pin_mask));
         }
     };
 }
 
 macro_rules! float_high {
-    () => {
+    ($pin_mask:expr) => {
         unsafe {
             let sio = &*pac::SIO::PTR;
-            sio.gpio_oe_clr().write(|w| w.bits(1 << 0));
+            sio.gpio_oe_clr().write(|w| w.bits($pin_mask));
         }
     };
 }
 
 #[link_section = ".data"]
 #[inline(never)]
-fn send_bit(bit: bool) {
-    pull_low!();
+fn send_bit(pin_mask: u32, bit: bool) {
+    pull_low!(pin_mask);
     if bit {
         wait_us(1);
-        float_high!();
+        float_high!(pin_mask);
         wait_us(3);
     } else {
         wait_us(3);
-        float_high!();
+        float_high!(pin_mask);
         wait_us(1);
     }
 }
 
 #[link_section = ".data"]
 #[inline(never)]
-fn send_byte(mut byte: u8) {
+fn send_byte(pin_mask: u32, mut byte: u8) {
     for _ in 0..8 {
-        send_bit((byte & 0x80) != 0);
+        send_bit(pin_mask, (byte & 0x80) != 0);
         byte <<= 1;
     }
 }
 
 #[link_section = ".data"]
-pub fn poll_controller() -> Option<ControllerData> {
+pub fn poll_controller(pin_mask: u32) -> Option<ControllerData> {
     cortex_m::interrupt::free(|_| {
-        send_byte(0x40);
-        send_byte(0x03);
-        send_byte(0x00);
-        send_bit(true);
+        send_byte(pin_mask, 0x40);
+        send_byte(pin_mask, 0x03);
+        send_byte(pin_mask, 0x00);
+        send_bit(pin_mask, true);
 
-        float_high!();
+        float_high!(pin_mask);
 
         let sio = unsafe { &*pac::SIO::PTR };
-
         let mut bytes = [0u8; 8];
+
         for byte_idx in 0..8 {
             let mut current_byte = 0u8;
             for _ in 0..8 {
                 let mut timeout = 0;
 
-                while (sio.gpio_in().read().bits() & (1 << 0)) != 0 {
+                while (sio.gpio_in().read().bits() & pin_mask) != 0 {
                     timeout += 1;
                     if timeout > 100_000 {
                         return None;
@@ -91,12 +91,12 @@ pub fn poll_controller() -> Option<ControllerData> {
 
                 wait_us(2);
 
-                let is_low = (sio.gpio_in().read().bits() & (1 << 0)) == 0;
+                let is_low = (sio.gpio_in().read().bits() & pin_mask) == 0;
                 let bit_value = if is_low { 0 } else { 1 };
 
                 current_byte = (current_byte << 1) | bit_value;
 
-                while (sio.gpio_in().read().bits() & (1 << 0)) == 0 {
+                while (sio.gpio_in().read().bits() & pin_mask) == 0 {
                     timeout += 1;
                     if timeout > 100_000 {
                         return None;
