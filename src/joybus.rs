@@ -65,8 +65,32 @@ fn send_byte(pin_mask: u32, mut byte: u8) {
 }
 
 #[link_section = ".data"]
+#[inline(always)]
+fn wait_for_level(
+    sio: &pac::sio::RegisterBlock,
+    timer: &pac::timer::RegisterBlock,
+    pin_mask: u32,
+    high: bool,
+    timeout_us: u32,
+) -> bool {
+    let start = timer.timerawl().read().bits();
+    loop {
+        let is_high = (sio.gpio_in().read().bits() & pin_mask) != 0;
+        if is_high == high {
+            return true;
+        }
+        if timer.timerawl().read().bits().wrapping_sub(start) >= timeout_us {
+            return false;
+        }
+    }
+}
+
+#[link_section = ".data"]
 pub fn poll_controller(pin_mask: u32) -> Option<ControllerData> {
     cortex_m::interrupt::free(|_| {
+        let timer = unsafe { &*pac::TIMER::PTR };
+        let sio = unsafe { &*pac::SIO::PTR };
+
         send_byte(pin_mask, 0x40);
         send_byte(pin_mask, 0x03);
         send_byte(pin_mask, 0x00);
@@ -74,19 +98,13 @@ pub fn poll_controller(pin_mask: u32) -> Option<ControllerData> {
 
         float_high!(pin_mask);
 
-        let sio = unsafe { &*pac::SIO::PTR };
         let mut bytes = [0u8; 8];
 
         for byte_idx in 0..8 {
             let mut current_byte = 0u8;
             for _ in 0..8 {
-                let mut timeout = 0;
-
-                while (sio.gpio_in().read().bits() & pin_mask) != 0 {
-                    timeout += 1;
-                    if timeout > 100_000 {
-                        return None;
-                    }
+                if !wait_for_level(sio, timer, pin_mask, false, 50) {
+                    return None;
                 }
 
                 wait_us(2);
@@ -96,11 +114,8 @@ pub fn poll_controller(pin_mask: u32) -> Option<ControllerData> {
 
                 current_byte = (current_byte << 1) | bit_value;
 
-                while (sio.gpio_in().read().bits() & pin_mask) == 0 {
-                    timeout += 1;
-                    if timeout > 100_000 {
-                        return None;
-                    }
+                if !wait_for_level(sio, timer, pin_mask, true, 15) {
+                    return None;
                 }
             }
             bytes[byte_idx] = current_byte;

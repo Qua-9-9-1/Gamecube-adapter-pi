@@ -74,6 +74,8 @@ fn main() -> ! {
     let mut last_poll = timer.timerawl().read().bits();
 
     loop {
+        usb_dev.poll(&mut [&mut nintendo_class]);
+
         let now = timer.timerawl().read().bits();
 
         if now.wrapping_sub(last_poll) >= 8_000 {
@@ -85,11 +87,12 @@ fn main() -> ! {
                 } else {
                     report.disconnect_port(i);
                 }
+
+                usb_dev.poll(&mut [&mut nintendo_class]);
             }
 
             let _ = nintendo_class.write_report(&report);
+            usb_dev.poll(&mut [&mut nintendo_class]);
         }
-
-        usb_dev.poll(&mut [&mut nintendo_class]);
     }
 }
